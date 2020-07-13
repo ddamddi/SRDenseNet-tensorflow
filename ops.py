@@ -21,6 +21,7 @@ def deconv(x, channels, kernel_size=3, stride=2, padding='SAME', reuse=False, us
                                             bias_initializer=b_initializer, trainable=(not reuse), name=None)(x)
         return x
 
+
 def denseBlock(x, growth_rate=16, kernel_size=3, stride=1, padding='SAME', scope='denseBlock_0'):
     with tf.variable_scope(scope):
         x_in = []
@@ -41,11 +42,6 @@ def denseBlock(x, growth_rate=16, kernel_size=3, stride=1, padding='SAME', scope
         return x
 
 
-def concatenation(x):
-    x = tf.concat(x, axis=3)
-    return x
-
-
 def bottleneck(x, channels=256, kernel_size=1, stride=1, padding='SAME', use_bias=True, scope='bottleneck_0'):
     with tf.variable_scope(scope):
         x = tf.layers.conv2d(inputs=x, filters=channels, strides=stride,
@@ -57,3 +53,8 @@ def bottleneck(x, channels=256, kernel_size=1, stride=1, padding='SAME', use_bia
 
 def relu(x):
     return tf.nn.relu(x)
+
+
+def concatenation(x):
+    x = tf.concat(x, axis=3)
+    return x
