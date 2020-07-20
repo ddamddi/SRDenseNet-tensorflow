@@ -2,13 +2,18 @@ from network import SRDenseNet
 from utils import *
 import argparse
 
+def check_phase(args):
+    args.phase = args.phase.lower()
+    assert args.phase in ['train', 'test', 'infer'], 'Choose Train/Test/Infer phase'
+
 def check_args(args):
+    check_phase()
     return args
 
 def parse_args():
-    desc = "Tensorflow implementation of VDSR"
+    desc = "Tensorflow implementation of SRDenseNet"
     parser = argparse.ArgumentParser(description=desc)
-    parser.add_argument('--phase', type=str, default='train', help='train or test?')
+    parser.add_argument('--phase', type=str, default='train', help='Choose Train/Test/Infer Phase.')
 
     parser.add_argument('--channel', type=str, default='Y', help='RGB or Y or YCbCr')
     parser.add_argument('--scale', type=int, default=4, help='Super-Resolution Scale')
@@ -22,7 +27,7 @@ def parse_args():
                         help='Directory name to save the checkpoints')
     parser.add_argument('--log_dir', type=str, default='logs',
                         help='Directory name to save training logs')
-
+    parser.add_argument('--infer_dir', type=str, default='inferred', help='Directory name to save the infered images')
     return check_args(parser.parse_args())
 
 if __name__ == '__main__':
@@ -35,7 +40,10 @@ if __name__ == '__main__':
         cnn.build_model()
         show_all_variables()
     
-        if(args.phase == 'train'):
+        if args.phase == 'train':
             cnn.train()
-        
-        cnn.test()
+            cnn.test()
+        elif args.phase == 'test':
+            cnn.test()
+        elif args.phase == 'infer':
+            cnn.infer()
