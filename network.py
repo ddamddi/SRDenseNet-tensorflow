@@ -9,6 +9,7 @@ class SRDenseNet:
         self.sess = sess
         self.checkpoint_dir = args.checkpoint_dir
         self.log_dir = args.log_dir
+        self.infer_dir = args.infer_dir
         self.val_interval = args.val_interval
 
         self.pixel_max = 1.
@@ -16,7 +17,6 @@ class SRDenseNet:
         self.patch_size = 25
         self.img_c = 1
         self.scale = args.scale
-        # self.img_c = args.num_channel
         self.channel = args.channel
 
         self.epoch = args.epoch
@@ -25,25 +25,45 @@ class SRDenseNet:
         
         if args.phase == 'train':
             ''' Load 291 Dataset for Training ''' 
-            self.train_HR, self.train_LR = load_291(scale=self.scale)
+            self.train_HR = prepare_patches(load_train(), patch_size=100, stride=25)
+            self.train_LR = bicubic_downsampling(self.train_HR, scale=self.scale)
+
+            self.train_HR = preprocessing(self.train_HR)
+            self.train_LR = preprocessing(self.train_LR)
+
 
             ''' Load Datasets for Validation (Set5)'''
-            self.test_HR, self.test_LR = load_set5(scale=self.scale)
-            self.test_HR, self.test_LR = create_sub_patches((self.test_HR, self.test_LR))
+            self.test_HR = prepare_patches(load_set5(), patch_size=100, stride=100)
+            self.test_LR = bicubic_downsampling(self.test_HR, scale=self.scale)
+
+            self.test_HR = preprocessing(self.test_HR)
+            self.test_LR = preprocessing(self.test_LR)
+
+            self.test_HR = self.test_HR[:32]
+            self.test_LR = self.test_LR[:32]
 
             print("---------\nDatasets\n---------")
             print("TRAIN LABEL : ", str(np.array(self.train_HR).shape))
             print("TRAIN INPUT : ", str(np.array(self.train_LR).shape))
             print("TEST LABEL  : ", str(np.array(self.test_HR).shape))
             print("TEST INPUT  : ", str(np.array(self.test_LR).shape))
+            quit()
 
     def network(self, x, reuse=False):
+        skipConnect = []
         with tf.variable_scope("SRDenseNet", reuse=reuse):
+            x = conv(x, 16, kernel_size=3, stride=1, padding='SAME', use_bias=True, scope='low_level_conv_0')
+            x = relu(x)
+            skipConnect.append(x)
             for idx in range(8):
-                x = dense_block(x, growth_rate=16, kernel_size=3, stride=1, padding='SAME', scope='dense_block_' + str(idx))
-            
+                x = denseBlock(x, growth_rate=16, kernel_size=3, stride=1, padding='SAME', scope='denseBlock_' + str(idx))
+                skipConnect.append(x)
+
+            x = concatenation(skipConnect)
+            x = bottleneck(x, channels=256, kernel_size=1, stride=1, padding='SAME', use_bias=True, scope='bottleneck_0')
+
             for idx in range(2):
-                x = deconv(x, 256, kernel_size=3, stride=2, padding='VALID', use_bias=True, scope='deconv_' + str(idx))
+                x = deconv(x, 256, kernel_size=3, stride=2, padding='SAME', use_bias=True, scope='deconv_' + str(idx))
                 x = relu(x)
 
             x = conv(x, self.img_c, kernel_size=3, stride=1, padding='SAME', use_bias=True, scope='reconstrucion_0')
@@ -56,8 +76,11 @@ class SRDenseNet:
         self.train_X = tf.placeholder(tf.float32, [self.batch_size, self.patch_size, self.patch_size, self.img_c], name='train_X') 
         self.train_Y = tf.placeholder(tf.float32, [self.batch_size, self.patch_size * self.scale, self.patch_size * self.scale, self.img_c], name='train_Y')
 
-        self.test_X  = tf.placeholder(tf.float32, [None, self.patch_size, self.patch_size, self.img_c], name='test_X')
-        self.test_Y  = tf.placeholder(tf.float32, [None, self.patch_size * self.scale, self.patch_size * self.scale, self.img_c], name='test_Y')
+        # self.test_X  = tf.placeholder(tf.float32, [len(self.test_HR), self.patch_size, self.patch_size, self.img_c], name='test_X')
+        # self.test_Y  = tf.placeholder(tf.float32, [len(self.test_LR), self.patch_size * self.scale, self.patch_size * self.scale, self.img_c], name='test_Y')
+
+        self.test_X  = tf.placeholder(tf.float32, [1, None, None, self.img_c], name='test_X')
+        self.test_Y  = tf.placeholder(tf.float32, [1, None, None, self.img_c], name='test_Y')
 
         self.lr = tf.placeholder(tf.float32, name='learning_rate')
 
@@ -132,7 +155,7 @@ class SRDenseNet:
         print(" [*] Start Training...")
         for epoch in range(start_epoch, self.epoch):
 
-            if epoch == self.epoch // 2:
+            if epoch == 30:
                 print(" [*] Learning rate Decreased from %.5f to %.5f" % (epoch_lr , epoch_lr/10))
                 epoch_lr /= 10
 
@@ -170,7 +193,7 @@ class SRDenseNet:
 
             self.save(self.checkpoint_dir, epoch+1)
 
-        self.save(self.checkpoint_dir, self.epoch)
+        # self.save(self.checkpoint_dir, self.epoch)
         print("Elapsed Time : %dhour %dmin %dsec" % time_calculate(time.time() - start_time))
 
     def validate(self, val_counter):
@@ -196,21 +219,21 @@ class SRDenseNet:
             print(" [!] Load failed...")
         
         test_datasets = ['Set5', 'Set14', 'B100', 'Urban100']
+        # test_datasets = ['Urban100']
 
         ''' TEST DATA LOAD '''
         for dataset in test_datasets:
             if dataset == 'Set5':
-                self.test_HR, self.test_LR = load_set5(scale=self.test_scale)
+                self.test_HR = load_set5()
             if dataset == 'Set14':
-                self.test_HR, self.test_LR = load_set14(scale=self.test_scale)
+                self.test_HR = load_set14()
             if dataset == 'B100':
-                self.test_HR, self.test_LR = load_b100(scale=self.test_scale)
+                self.test_HR = load_b100()
             if dataset == 'Urban100':
-                self.test_HR, self.test_LR = load_urban100(scale=self.test_scale)
+                self.test_HR = load_urban100()
 
-            self.test_HR, self.test_LR = create_sub_patches((self.test_HR, self.test_LR))
-            # self.test_HR_cbcr, self.test_LR_cbcr = load_set14(scale=2, color_space='YCbCr')
-            # print(self.test_HR_cbcr.shape)
+            self.test_HR = prepare_patches(self.test_HR, patch_size=100, stride=100)
+            self.test_LR = bicubic_downsampling(self.test_HR, scale=self.scale)
 
             test_loss_mean = 0.
             test_psnr_mean = 0.
@@ -218,60 +241,123 @@ class SRDenseNet:
 
             start_time = time.time()
             for idx in range(len(self.test_HR)):
-                h, w, c = self.test_HR[idx].shape
-                _h, _w, _c = self.test_LR[idx].shape
-                h = min(h, _h)
-                w = min(w, _w)
+                label_img = self.test_HR[idx]
+                input_img = self.test_LR[idx]
 
-                HR = self.test_HR[idx][:h,:w]
-                LR = self.test_LR[idx][:h,:w]
-                
-                # HR_cbcr = self.test_HR_cbcr[idx][:,:,:2]
-                # LR_cbcr = self.test_LR_cbcr[idx][:,:,:2]
+                h, w = label_img.size
+                _h, _w = input_img.size
 
-                HR = HR.reshape([1,h,w,c])
-                LR = LR.reshape([1,h,w,c])
+                label_img = np.array(label_img)[:,:,0:1]
+                input_img = np.array(input_img)[:,:,0:1]
+
+                label_img = normalize(label_img)
+                input_img = normalize(input_img)
+
+                label_img = label_img.reshape([1, h, w,self.img_c])
+                input_img = input_img.reshape([1,_h,_w,self.img_c])
 
                 test_feed_dict = {
-                    self.test_X : LR,
-                    self.test_Y : HR
+                    self.test_X : input_img,
+                    self.test_Y : label_img
                 }
 
-                test_output, test_loss, test_psnr, test_ssim = self.sess.run([self.test_output, self.test_loss, self.test_psnr, self.test_ssim], feed_dict=test_feed_dict)
+                test_output, test_loss, test_psnr, test_ssim = self.sess.run(
+                                        [self.test_output, self.test_loss, self.test_psnr, self.test_ssim], 
+                                        feed_dict=test_feed_dict)
 
                 test_loss_mean += test_loss
                 test_psnr_mean += test_psnr
                 test_ssim_mean += test_ssim
-
-                # test_output = test_output.reshape([h,w,c])
-                # output = np.concatenate((test_output, LR_cbcr[:,:,0:1], LR_cbcr[:,:,1:2]), axis=2)
-                # output = denormalize(output)
-                # output = ycrcb2bgr(output)
-                
-                # gt = self.test_HR_cbcr[idx] 
-                # gt = np.concatenate((gt[:,:,2:3], gt[:,:,0:2]),axis=2)
-                # gt = denormalize(gt)
-                # gt = ycrcb2bgr(gt)
-
-                # ilr = self.test_LR_cbcr[idx]
-                # ilr = np.concatenate((ilr[:,:,2:3], ilr[:,:,0:2]),axis=2)
-                # ilr = denormalize(ilr)
-                # ilr = ycrcb2bgr(ilr)
-
-                # print('Image' + str(idx) + '- psnr: {}, ssim: {}'.format(test_psnr, test_ssim))
-                # cv2.imshow('Infrence' + str(idx), output)
-                # cv2.imshow('GT' + str(idx), gt)
-                # cv2.imshow('ILR' + str(idx), ilr)
-
-                # cv2.waitKey(0)
-                # cv2.destroyAllWindows()
 
             test_loss_mean /= len(self.test_HR)
             test_psnr_mean /= len(self.test_HR)
             test_ssim_mean /= len(self.test_HR)
 
             print("{} Average - test_loss: {}, test_psnr: {}, test_ssim: {}".format(dataset, test_loss_mean, test_psnr_mean, test_ssim_mean))
-            print("Elapsed Time : %dhour %dmin %dsec" % time_calculate(time.time()- start_time))
+            print("     Elapsed Time : %dhour %dmin %dsec" % time_calculate(time.time()- start_time))
+
+    def infer(self):
+        tf.global_variables_initializer().run()
+
+        self.saver = tf.train.Saver()
+        could_load, checkpoint_counter = self.load(self.checkpoint_dir)
+
+        if could_load:
+            print(" [*] Load SUCCESS")
+        else:
+            print(" [!] Load failed...")
+        
+        # infer_datasets = ['Set5', 'Set14', 'B100', 'Urban100']
+        infer_datasets = ['Set5']
+
+        ''' Infer DATA LOAD '''
+        for dataset in infer_datasets:
+            if dataset == 'Set5':
+                self.test_HR = load_set5()
+            if dataset == 'Set14':
+                self.test_HR = load_set14()
+            if dataset == 'B100':
+                self.test_HR = load_b100()
+            if dataset == 'Urban100':
+                self.test_HR = load_urban100()
+
+            test_loss_mean = 0.
+            test_psnr_mean = 0.
+            test_ssim_mean = 0.
+
+            start_time = time.time()
+            for idx in range(len(self.test_HR)):
+                label_img = mod_crop(self.test_HR[idx], self.scale)
+                input_img = bicubic_downsampling(label_img, scale=self.scale)[0]
+
+                h, w = label_img.size
+                _h, _w = input_img.size
+
+                # cbcr = input_img.resize((h, w), Image.BICUBIC)
+                cbcr = bicubic_upsampling(input_img, scale=self.scale)[0]
+                cbcr = np.array(cbcr)[:,:,1:3]
+
+                label_y = np.array(label_img)[:,:,0:1]
+                input_y = np.array(input_img)[:,:,0:1]
+
+                label_y = normalize(label_y)
+                input_y = normalize(input_y)
+
+                label_y = label_y.reshape([1, w, h, self.img_c])
+                input_y = input_y.reshape([1,_w,_h, self.img_c])
+
+                test_feed_dict = {
+                    self.test_X : input_y,
+                    self.test_Y : label_y
+                }
+
+                test_output, test_loss, test_psnr, test_ssim = self.sess.run(
+                                        [self.test_output, self.test_loss, self.test_psnr, self.test_ssim], 
+                                        feed_dict=test_feed_dict)
+                    
+                test_output = denormalize(test_output)
+                test_output = test_output.reshape([w, h, self.img_c])
+                test_output = np.concatenate((test_output, cbcr), axis=2)
+                test_output = Image.fromarray(test_output, mode='YCbCr')
+                test_output = ycbcr2rgb(test_output)
+
+                if not os.path.exists(os.path.join(self.infer_dir, dataset, str(self.scale)+'x')):
+                    os.makedirs(os.path.join(self.infer_dir, dataset, str(self.scale)+'x'))
+                
+                infer_path = os.path.join(self.infer_dir, dataset, str(self.scale)+'x')
+                imsave(test_output, os.path.join(infer_path, 'SRDenseNet_' + str(self.scale) + 'x_' + str(idx) + '_' + str(test_psnr) + '_' + str(test_ssim) + '.png'))
+                print("{}[{}] - test_loss: {}, test_psnr: {}, test_ssim: {}".format(dataset, idx, test_loss, test_psnr, test_ssim))
+
+                test_loss_mean += test_loss
+                test_psnr_mean += test_psnr
+                test_ssim_mean += test_ssim
+
+            test_loss_mean /= len(self.test_HR)
+            test_psnr_mean /= len(self.test_HR)
+            test_ssim_mean /= len(self.test_HR)
+
+            print("{} Average - test_loss: {}, test_psnr: {}, test_ssim: {}".format(dataset, test_loss_mean, test_psnr_mean, test_ssim_mean))
+            print("     Elapsed Time : %dhour %dmin %dsec" % time_calculate(time.time()- start_time))
 
     @property
     def model_dir(self):
