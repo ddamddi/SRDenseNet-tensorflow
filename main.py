@@ -7,7 +7,7 @@ def check_phase(args):
     assert args.phase in ['train', 'test', 'infer'], 'Choose Train/Test/Infer phase'
 
 def check_args(args):
-    check_phase()
+    check_phase(args)
     return args
 
 def parse_args():
